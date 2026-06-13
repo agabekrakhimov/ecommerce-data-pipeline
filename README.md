@@ -1,13 +1,10 @@
 # ecommerce-data-pipeline
 
-An end-to-end, **fully reproducible analytics pipeline** for a synthetic e-commerce business — raw data → warehouse → SQL star-schema modeling → analytics & charts — built with the **Python standard library only** (zero dependencies, runs offline).
+I built this to practice the full data flow — not just writing SQL in a notebook, but getting data from raw files into a warehouse, modeling it, and actually answering business questions from it.
 
-It deliberately shows both sides of the data role:
+It's a fake e-commerce store: Python generates CSVs, loads them into SQLite, SQL builds a star schema (staging → dims + fact), then a few analytics queries write out an insights report and SVG charts. Everything runs on the **Python standard library** — no `pip install`, no API keys, no cloud account.
 
-- **Data engineering:** data generation → ingestion into a SQL warehouse → staging + marts modeling (dbt-style layering) → a one-command orchestrator.
-- **Data analytics:** business-question SQL (window functions, joins, cohorts), generated insights, and embedded charts.
-
-> The dataset is **synthetic-but-realistic** and generated from a fixed seed, so anyone — including a recruiter — can clone the repo and reproduce every number and chart with a single command. No API keys, no cloud, no `pip install`.
+The data is **synthetic** (fixed seed in `generate_data.py`), so the numbers aren't real business metrics. But anyone can clone this and reproduce the exact same output with one command, which was kind of the point for a portfolio piece.
 
 ---
 
@@ -22,7 +19,7 @@ flowchart LR
   Analysis --> Outputs["outputs/<br/>insights.md + SVG charts"]
 ```
 
-The flow is a classic **ELT**: land raw data untyped, clean/typecast it in a staging layer, then model it into a dimensional **star schema** that analytics queries sit on top of.
+Classic ELT setup: land raw data untyped, clean it in staging, model into a star schema, then query the marts.
 
 ### Star schema (marts)
 
@@ -43,30 +40,30 @@ The flow is a classic **ELT**: land raw data untyped, clean/typecast it in a sta
                          revenue, cost_amount, gross_profit
 ```
 
-- **`fct_orders`** is the fact table at **order-item grain**, with additive measures (`revenue = quantity * unit_price`, `cost_amount`, `gross_profit`) and foreign keys to both dimensions.
-- **`dim_customers`** and **`dim_products`** are conformed dimensions. `cohort_month` on the customer dimension powers retention analysis.
+- **`fct_orders`** — fact table at order-item grain. Measures: `revenue`, `cost_amount`, `gross_profit`. FKs to both dims.
+- **`dim_customers`** / **`dim_products`** — conformed dimensions. `cohort_month` on customers is what I used for retention analysis.
 
 ---
 
-## Key insights (from the actual run)
+## What the pipeline found
 
-These numbers are produced by `src/analysis.py` and written to [`outputs/insights.md`](outputs/insights.md). They are deterministic — re-running the pipeline reproduces them exactly.
+These come from the last run of `src/analysis.py` — see [`outputs/insights.md`](outputs/insights.md) for the full write-up. Re-running the pipeline reproduces the same numbers.
 
-**Dataset:** 2,000 customers · 200 products · 20,002 orders · 51,892 order line items · Jan 2024 → Dec 2025 · **$17.26M** total completed revenue.
+**Dataset:** 2,000 customers · 200 products · 20,002 orders · 51,892 line items · Jan 2024 → Dec 2025 · **$17.26M** completed revenue.
 
-### 1. Revenue grew +312% over 24 months
+### Revenue grew +312% over 24 months
 
-Monthly completed revenue climbed from **$341,713** (2024-01) to **$1,409,233** (2025-12), with the expected Q4 seasonal peaks.
+Monthly revenue went from **$341,713** (Jan 2024) to **$1,409,233** (Dec 2025). There's a clear Q4 bump in the synthetic data — I baked seasonality into the generator.
 
 ![Monthly revenue](outputs/charts/monthly_revenue_line.svg)
 
-### 2. Top products are dominated by Electronics
+### Top products are all Electronics
 
-The top 10 products by revenue are **all Electronics** (high-ticket items), led by one product at **$570,884**.
+The top 10 by revenue are Electronics SKUs (high ticket). #1 alone did **$570,884**.
 
 ![Top products](outputs/charts/top_products_bar.svg)
 
-### 3. Enterprise customers drive half of all revenue
+### Enterprise is ~10% of customers but half the revenue
 
 | Segment | Revenue | % of revenue | AOV |
 | --- | --- | --- | --- |
@@ -74,33 +71,33 @@ The top 10 products by revenue are **all Electronics** (high-ticket items), led 
 | SMB | $4.46M | 25.9% | $752 |
 | Consumer | $4.13M | 23.9% | $605 |
 
-Enterprise is ~10% of customers but **50.2%** of revenue, and its **$2,749 AOV** is ~4.5x the Consumer AOV — a classic "whales" pattern worth protecting.
+Enterprise AOV is about 4.5× Consumer. Small customer count, big spend — the kind of segment you'd want to keep happy.
 
 ![Revenue by segment](outputs/charts/revenue_by_segment_bar.svg)
 
-### 4. Overall AOV is $1,085
+### Overall AOV is $1,085
 
-Across 15,912 completed orders, the average order value is **$1,085**. The US is the largest market at **$6.57M** revenue.
+15,912 completed orders, average **$1,085**. US is the biggest market at **$6.57M**.
 
-### 5. Cohort retention settles around ~42%
+### Cohort retention flattens around ~42%
 
-Using a window-function cohort analysis, **48.7%** of a signup cohort reorders within 1 month and **45.5%** are still active at 3 months, leveling off near **~42%** by month 6.
-
----
-
-## Business questions answered
-
-1. How is monthly revenue trending? (with month-over-month change + running total via `LAG()` and a windowed `SUM()`)
-2. What are the top 10 products by revenue? (`RANK()` leaderboard)
-3. How does revenue split by customer segment and country? (share-of-total via `SUM() OVER ()`)
-4. What is the average order value, overall and per segment?
-5. How well do monthly signup cohorts retain over time?
+Signup cohorts: **48.7%** reorder within a month, **45.5%** still active at 3 months, then it levels off near **~42%** by month 6. I used window functions to pool cohorts — details in `src/analysis.py`.
 
 ---
 
-## Run it yourself
+## Questions the SQL answers
 
-**Requirements:** Python 3.8+ only. No third-party packages, no internet, no setup.
+1. Monthly revenue trend (MoM change with `LAG()`, running total with windowed `SUM()`)
+2. Top 10 products by revenue (`RANK()`)
+3. Revenue split by segment and country (`SUM() OVER ()` for share-of-total)
+4. AOV overall and by segment
+5. Signup cohort retention over time
+
+---
+
+## Run it
+
+**Needs:** Python 3.8+. That's it.
 
 ```bash
 git clone <this-repo>
@@ -108,7 +105,7 @@ cd ecommerce-data-pipeline
 python3 run_pipeline.py
 ```
 
-The orchestrator runs all five stages and prints clear step logs:
+Steps:
 
 ```
 [1/5] Generate raw data         -> data/raw/*.csv
@@ -118,50 +115,44 @@ The orchestrator runs all five stages and prints clear step logs:
 [5/5] Analysis (SQL + charts)   -> outputs/insights.md + outputs/charts/*.svg
 ```
 
-After it finishes, open [`outputs/insights.md`](outputs/insights.md) and the SVG charts in `outputs/charts/`.
+When it finishes, check `outputs/insights.md` and the SVGs in `outputs/charts/`.
 
 ---
 
-## Project structure
+## Project layout
 
 ```
 ecommerce-data-pipeline/
-├── run_pipeline.py          # one-command orchestrator (generate -> ingest -> SQL -> analyze)
+├── run_pipeline.py          # orchestrator
 ├── requirements.txt         # stdlib only — nothing to install
 ├── src/
-│   ├── generate_data.py     # reproducible synthetic raw CSVs (fixed seed)
-│   ├── ingest.py            # load raw CSVs into warehouse.sqlite (raw_* tables)
-│   ├── svg_charts.py        # tiny pure-Python SVG bar/line chart helper
-│   └── analysis.py          # business-question SQL -> insights.md + charts
+│   ├── generate_data.py     # synthetic CSVs (seed 42)
+│   ├── ingest.py            # CSV → warehouse.sqlite
+│   ├── svg_charts.py        # minimal SVG chart helper
+│   └── analysis.py          # business SQL → insights.md + charts
 ├── sql/
-│   ├── staging/             # stg_* : clean + typecast (one file per table)
-│   │   ├── stg_customers.sql
-│   │   ├── stg_products.sql
-│   │   ├── stg_orders.sql
-│   │   └── stg_order_items.sql
-│   └── marts/               # star schema
-│       ├── dim_customers.sql
-│       ├── dim_products.sql
-│       └── fct_orders.sql
+│   ├── staging/             # stg_* views
+│   └── marts/               # dim_* + fct_orders
 ├── data/raw/                # generated CSVs (git-ignored)
 └── outputs/
-    ├── insights.md          # generated narrative + tables
-    └── charts/              # generated SVGs (render on GitHub)
+    ├── insights.md
+    └── charts/
 ```
 
 ---
 
-## Skills demonstrated
+## What I was practicing
 
-- **SQL** — JOINs, aggregations, and **window functions** (`LAG`, `RANK`, `SUM() OVER`), plus dimensional modeling.
-- **Data modeling** — staging → marts layering and a **star schema** (fact + conformed dimensions) at a well-defined grain.
-- **Python** — clean, modular standard-library code (no frameworks) for generation, ingestion, and analysis.
-- **ETL / orchestration** — a single reproducible `run_pipeline.py` driving all stages with clear logging.
-- **Analytics** — revenue trends, top-N, segmentation, AOV, and **cohort retention**.
-- **Data viz** — a from-scratch SVG chart engine; charts render natively in this README.
+- **SQL** — joins, aggregations, window functions (`LAG`, `RANK`, `SUM() OVER`)
+- **Modeling** — staging → marts, star schema, picking the right grain for the fact table
+- **Python (stdlib)** — data generation, ingestion, orchestration without pulling in pandas/etc.
+- **Cohort analysis** — retention curve from signup month
+- **Charts** — wrote a tiny SVG renderer instead of matplotlib (mostly to keep deps at zero)
 
 ---
 
-## Note on the data
+## About the data
 
-The dataset is **synthetic but realistic** — generated in `src/generate_data.py` with `random.seed(42)`, modeling growth, Q4 seasonality, segment-driven order sizes, and discounts. Using synthetic data keeps the project **fully reproducible and offline** while still exercising real-world analytics patterns. No real customer data is used.
+All fake. `src/generate_data.py` uses `random.seed(42)` and tries to mimic realistic patterns — growth over time, Q4 seasonality, segment-based order sizes, occasional discounts. No real customer data anywhere.
+
+If I were taking this further I'd probably swap SQLite for Postgres, add dbt for the SQL layer, and hook up a real BI tool. For now it does what I needed: something I could explain end-to-end in an interview.
