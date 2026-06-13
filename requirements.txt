@@ -1,0 +1,10 @@
+# No external dependencies required.
+#
+# This project runs on the Python standard library ONLY (sqlite3, csv, random,
+# datetime, glob). There is nothing to pip install.
+#
+# Requirements:
+#   - Python 3.8+
+#
+# Run it with:
+#   python3 run_pipeline.py

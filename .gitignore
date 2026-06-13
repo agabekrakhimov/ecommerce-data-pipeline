@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Data & build artifacts
+data/raw/*.csv
+warehouse.duckdb
+*.duckdb.wal
+warehouse.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# OS
+.DS_Store
