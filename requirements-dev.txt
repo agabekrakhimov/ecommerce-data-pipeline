@@ -1,0 +1,2 @@
+# Test-only. The pipeline itself stays on the Python standard library.
+pytest>=7,<9

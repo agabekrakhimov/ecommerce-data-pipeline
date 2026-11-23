@@ -8,3 +8,6 @@
 #
 # Run it with:
 #   python3 run_pipeline.py
+#
+# The data-quality test suite uses pytest. That is not needed to run the pipeline.
+#   pip install -r requirements-dev.txt && pytest -q
