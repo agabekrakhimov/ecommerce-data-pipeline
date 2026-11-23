@@ -7,7 +7,8 @@ Runs end-to-end with the Python standard library only:
   2. ingest     -> load raw CSVs into warehouse.sqlite (raw_* tables)
   3. staging    -> clean/typecast SQL views (stg_*)
   4. marts      -> star-schema tables (dim_customers, dim_products, fct_orders)
-  5. analysis   -> business-question SQL -> outputs/insights.md + SVG charts
+  5. quality    -> null / duplicate / range / referential checks on the marts
+  6. analysis   -> business-question SQL -> outputs/insights.md + SVG charts
 """
 
 import glob
@@ -22,13 +23,14 @@ sys.path.insert(0, SRC)
 
 import generate_data       # noqa: E402
 import ingest              # noqa: E402
+import quality             # noqa: E402
 import analysis            # noqa: E402
 
 DB_PATH = os.path.join(BASE, "warehouse.sqlite")
 
 
 def _banner(step, title):
-    print("\n[{}/5] {}".format(step, title))
+    print("\n[{}/6] {}".format(step, title))
     print("-" * 52)
 
 
@@ -67,7 +69,13 @@ def main():
     finally:
         conn.close()
 
-    _banner(5, "Analysis (SQL + charts + insights)")
+    _banner(5, "Data quality checks")
+    status = quality.main(DB_PATH)
+    if status != 0:
+        print("\nStopped before analysis. The marts failed a data quality check.")
+        sys.exit(status)
+
+    _banner(6, "Analysis (SQL + charts + insights)")
     analysis.main()
 
     print("\n" + "=" * 52)
