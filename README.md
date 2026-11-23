@@ -2,7 +2,7 @@
 
 I built this to practice the full data flow — not just writing SQL in a notebook, but getting data from raw files into a warehouse, modeling it, and actually answering business questions from it.
 
-It's a fake e-commerce store: Python generates CSVs, loads them into SQLite, SQL builds a star schema (staging → dims + fact), then a few analytics queries write out an insights report and SVG charts. Everything runs on the **Python standard library** — no `pip install`, no API keys, no cloud account.
+It's a fake e-commerce store: Python generates CSVs, loads them into SQLite, SQL builds a star schema (staging → dims + fact), then a few analytics queries write out an insights report and SVG charts. Everything runs on the **Python standard library** — no `pip install` to run the pipeline, no API keys, no cloud account.
 
 The data is **synthetic** (fixed seed in `generate_data.py`), so the numbers aren't real business metrics. But anyone can clone this and reproduce the exact same output with one command, which was kind of the point for a portfolio piece.
 
@@ -15,11 +15,12 @@ flowchart LR
   Gen["generate_data.py<br/>raw CSVs"] --> Ingest["ingest.py<br/>warehouse.sqlite (raw_*)"]
   Ingest --> Staging["sql/staging/*<br/>stg_* (clean + typecast)"]
   Staging --> Marts["sql/marts/*<br/>star schema"]
-  Marts --> Analysis["analysis.py<br/>SQL + charts"]
+  Marts --> Quality["sql/quality/*<br/>stop on bad rows"]
+  Quality --> Analysis["analysis.py<br/>SQL + charts"]
   Analysis --> Outputs["outputs/<br/>insights.md + SVG charts"]
 ```
 
-Classic ELT setup: land raw data untyped, clean it in staging, model into a star schema, then query the marts.
+Classic ELT setup: land raw data untyped, clean it in staging, model into a star schema, check the marts, then query them.
 
 ### Star schema (marts)
 
@@ -108,14 +109,67 @@ python3 run_pipeline.py
 Steps:
 
 ```
-[1/5] Generate raw data         -> data/raw/*.csv
-[2/5] Ingest raw CSVs           -> warehouse.sqlite (raw_* tables)
-[3/5] Staging (clean + typecast)-> stg_* views
-[4/5] Marts (star schema)       -> dim_customers, dim_products, fct_orders
-[5/5] Analysis (SQL + charts)   -> outputs/insights.md + outputs/charts/*.svg
+[1/6] Generate raw data         -> data/raw/*.csv
+[2/6] Ingest raw CSVs           -> warehouse.sqlite (raw_* tables)
+[3/6] Staging (clean + typecast)-> stg_* views
+[4/6] Marts (star schema)       -> dim_customers, dim_products, fct_orders
+[5/6] Data quality              -> sql/quality checks (stops here on failure)
+[6/6] Analysis (SQL + charts)   -> outputs/insights.md + outputs/charts/*.svg
 ```
 
 When it finishes, check `outputs/insights.md` and the SVGs in `outputs/charts/`.
+
+---
+
+## Data quality checks
+
+A null key, a duplicated order line, or a price that went negative used to flow straight into the revenue chart. After the marts are built, `src/quality.py` runs the SQL in `sql/quality/` and the pipeline stops if any check returns rows. Analysis only runs when that gate is clean.
+
+```mermaid
+flowchart TD
+  Marts["Marts<br/>dim_customers, dim_products, fct_orders"] --> Gate["src/quality.py"]
+  Gate --> Nulls["Nulls"]
+  Gate --> Dupes["Duplicates"]
+  Gate --> Ranges["Ranges and domains"]
+  Gate --> FKs["Foreign keys"]
+  Gate --> Math["Measure consistency"]
+  Nulls --> Ok{"Any failing rows?"}
+  Dupes --> Ok
+  Ranges --> Ok
+  FKs --> Ok
+  Math --> Ok
+  Ok -->|no| Analysis["analysis.py"]
+  Ok -->|yes| Stop["exit 1"]
+```
+
+Each file under `sql/quality/` is one check. The SELECT lists the bad rows, and an empty result is a pass.
+
+| Category | What it covers |
+| --- | --- |
+| Nulls | Required columns on both dimensions and `fct_orders`. Blank strings count as missing. |
+| Duplicates | `dim_customers.customer_id`, `dim_products.product_id`, and the fact grain `order_item_id`. |
+| Ranges | Segment, country, category, and order status; dates outside Jan 2024–Dec 2025 or not a real calendar day; `quantity < 1`; `price <= 0`; `cost < 0`; `cost > price`. |
+| Referential | Fact `customer_id` / `product_id` missing from the dimensions, and an order month earlier than the customer's signup month. |
+| Consistency | `cohort_month` vs signup date, margins vs price and cost, `revenue` / `cost_amount` / `gross_profit`, `order_month` vs `order_date`. |
+
+SQLite's `date()` rolls impossible days forward (`2024-02-31` becomes `2024-03-02`), so the date checks require the stored value to equal `date(value)`.
+
+On the seeded warehouse this is quiet: 17 checks, 0 violations, then the insights run as usual. The tests also load a small mart with planted problems (null keys, duplicated ids, a negative price, an orphan customer, revenue that doesn't match quantity × price). That fixture fails 16 checks and reports **48 violations** — 24 nulls, 3 duplicate keys, 11 range issues, 7 consistency issues, 3 broken references.
+
+Check a warehouse you already built:
+
+```bash
+python3 src/quality.py
+```
+
+Run the tests (pytest is only used here; `run_pipeline.py` still has no third-party packages):
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+GitHub Actions runs that same pytest command on push and on pull requests.
 
 ---
 
@@ -125,14 +179,19 @@ When it finishes, check `outputs/insights.md` and the SVGs in `outputs/charts/`.
 ecommerce-data-pipeline/
 ├── run_pipeline.py          # orchestrator
 ├── requirements.txt         # stdlib only — nothing to install
+├── requirements-dev.txt     # pytest, for the quality checks
 ├── src/
 │   ├── generate_data.py     # synthetic CSVs (seed 42)
 │   ├── ingest.py            # CSV → warehouse.sqlite
+│   ├── quality.py           # run sql/quality checks
 │   ├── svg_charts.py        # minimal SVG chart helper
 │   └── analysis.py          # business SQL → insights.md + charts
 ├── sql/
 │   ├── staging/             # stg_* views
-│   └── marts/               # dim_* + fct_orders
+│   ├── marts/               # dim_* + fct_orders
+│   └── quality/             # null / duplicate / range / FK checks
+├── tests/                   # pytest for the quality gate
+├── .github/workflows/       # CI: pytest on push and pull request
 ├── data/raw/                # generated CSVs (git-ignored)
 └── outputs/
     ├── insights.md
@@ -148,6 +207,7 @@ ecommerce-data-pipeline/
 - **Python (stdlib)** — data generation, ingestion, orchestration without pulling in pandas/etc.
 - **Cohort analysis** — retention curve from signup month
 - **Charts** — wrote a tiny SVG renderer instead of matplotlib (mostly to keep deps at zero)
+- **Data quality** — SQL checks for nulls, duplicate keys, ranges, and foreign keys, with a hard stop before the charts if they fail
 
 ---
 
